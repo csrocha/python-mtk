@@ -1,0 +1,67 @@
+#!/usr/bin/env python
+
+# Standard library imports
+import sys
+from os.path import join, dirname
+
+# Enthought library imports
+try:
+	from enthought.mayavi.plugins.app import Mayavi
+except ImportError:
+	from enthought.mayavi.app import Mayavi
+from enthought.mayavi.sources.vtk_xml_file_reader import VTKXMLFileReader
+from enthought.mayavi.sources.array_source import ArraySource
+from enthought.mayavi.modules.outline import Outline
+from enthought.mayavi.modules.streamline import Streamline
+from enthought.mayavi.modules.iso_surface import IsoSurface
+from enthought.mayavi.modules.image_plane_widget import ImagePlaneWidget
+
+
+# Numpy
+from numpy import array
+import numpy
+import pickle
+from mtk.geometry.vol import load
+
+class ShowNPY(Mayavi):
+    def __init__(self, filenames):
+        Mayavi.__init__(self)
+        self.grid = []
+        for filename in filenames:
+            V, mdV = load(filename)
+            print mdV, V._data.min(), V._data.max()
+            self.grid.append((V._data, V.metadata, filename))
+
+    def run(self):
+        print "Running..."
+        script = self.script
+
+        script.new_scene()
+        for grid, metadata, name in self.grid:
+            src = ArraySource()
+            src.scalar_data = grid.real
+            if metadata != None:
+                src.origin = metadata['min']
+                if 'delta' in metadata:
+                    src.spacing = array(metadata['delta'])
+                elif 'deltas3D' in metadata:
+                    src.spacing = array(metadata['deltas3D']).diagonal()
+                else:
+                    src.spacing = array([metadata['res']]*3)
+                src.scalar_name = name
+                src.update_image_data = True
+            script.add_source(src)
+
+            o = Outline()
+            script.add_module(o)
+            ipw = ImagePlaneWidget()
+            script.add_module(ipw)
+            isup = IsoSurface()
+            script.add_module(isup)
+
+
+if __name__ == '__main__':
+    filenames = sys.argv[1:]
+    snpy = ShowNPY(filenames)
+    snpy.main()
+

@@ -1,0 +1,16 @@
+csv directory:
+
+	aminoacids.csv:	http://kbiotech.com/Tm/aacode.htm
+
+	atomname.csv: http://www.bmrb.wisc.edu/ref_info/atom_nom.tbl
+
+	contact.csv: Determination of Atomic Desolvation Energies From the Structures of Crystallized Proteins, Chao Zhang1, George Vasmatzis1, James L. Cornette2 and Charles DeLisi1*
+
+	equivalents.csv: Determination of Atomic Desolvation Energies From the Structures of Crystallized Proteins, Chao Zhang1, George Vasmatzis1, James L. Cornette2 and Charles DeLisi1*
+
+	potential.csv: http://www.amber.org
+
+	tinkerbiocorrection.csv: http://koko.che.caltech.edu/wiki/index.php5/Scripts_to_import_TINKER_parameter_files
+
+pdb directory:
+

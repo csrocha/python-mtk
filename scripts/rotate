@@ -1,0 +1,70 @@
+#!/usr/bin/env python
+# -*- coding: ISO-8859-1 -*-
+# $Id: drawmol.py 93 2009-06-15 14:06:18Z cristian_docking $
+#
+#  Copyright (C) 2009   Cristian S. Rocha (crocha@dc.uba.ar)
+#  Licensed to PSF under a Contributor Agreement.
+_usage_ =\
+"""
+rotate volume matrix of a molecule
+
+Usage:
+    rotate <geometry npy file> <prefix result> <step>
+
+"""
+import sys
+import os.path
+import pickle
+import getopt
+from time import time
+from sys import stderr
+import numpy
+
+try:
+    import mtk
+except ImportError:
+    print "WARNING: MTK is not installed. Looking for package dir."
+    if os.path.exists("build/lib/mtk"):
+        print "Found in build/lib"
+        sys.path.append("build/lib")
+    elif os.path.exists("mtk"):
+        print "Found in work dir"
+        sys.path.append(".")
+    import mtk
+
+from mtk.signal import rxcorr
+from mtk.geometry.vol import Volume
+from mtk.geometry.transformation import rotation, translation, genRotations
+from numpy import radians, dot
+
+def load_volume(filenames):
+    filenames = filenames.split(':')
+    npy_filenames = filenames[:-1]
+    metadata = pickle.load(open(filenames[-1]))
+
+    A = [ Volume(metadata['min'],
+                 metadata['max'],
+                 metadata['res'],
+                 def_array = numpy.load(filename))
+         for filename in npy_filenames ]
+
+    return A
+
+A = load_volume(sys.argv[1])
+prefix = sys.argv[2]
+step = float(sys.argv[3])
+
+o = (A[0].min + A[0].max) / 2
+res = A[0].res*2
+c = 0
+print "[%f] Empiezo a generar rotaciones" % time()
+for T in genRotations(radians(step), radians(step), radians(step), o):
+    print "[%f] Rotacion %i" % (time(), c)
+    T = dot(T, translation(-o))
+    C = A[0].transform(T, res)
+
+    numpy.save("%s.%i.npy" % (prefix, c), C.A)
+    pickle.dump(C.metadata(), open("%s.%i.dat" % (prefix, c), "w"))
+    c += 1
+print "[%f] Termino de generar rotaciones" % time()
+

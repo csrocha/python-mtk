@@ -1,0 +1,653 @@
+#!/usr/bin/env python
+# -*- coding: ISO-8859-1 -*-
+# $Id: mtktool 142 2010-11-03 03:10:04Z crocha $
+#
+#  Copyright (C) 2009   Cristian S. Rocha (crocha@dc.uba.ar)
+#  Licensed to PSF under a Contributor Agreement.
+import sys
+import os.path
+import pickle
+import getopt
+from time import time
+from sys import stderr
+from numpy import array, save, fix, ceil, zeros
+
+try:
+    import mtk
+except ImportError:
+    print "WARNING: MTK is not installed. Looking for package dir."
+    if os.path.exists("build/lib/mtk"):
+        print "Found in build/lib"
+        sys.path.append("build/lib")
+    elif os.path.exists("mtk"):
+        print "Found in work dir"
+        sys.path.append(".")
+    import mtk
+
+from mtk.storage import Storage, AssignError
+from mtk.geometry.vol import create_from_coords
+
+
+def load_atoms(filename):
+    """
+    Lee un archivo de átomos .csv o .pqr
+    con información de radio de VDW y carga.
+    """
+    if filename[-4:] == ".csv":
+        input = csv.reader(open(filename))
+        atoms = array(map(lambda x: map(float, x), list(input)[1:]))
+        return atoms
+    elif filename[-4:] == ".pqr":
+        from mtk.io.pqr_ff import reader
+        r = reader(open(filename))
+        atoms = [ (i['serial'], i['x'], i['y'], i['z'], i['occupancy'],
+                 i['charge']) for h,i in reader(open(filename)) if h == 'ATOM']
+        return atoms
+
+def build_volume(coords, options):
+    """
+    Construye el volumen a partir de las coordenadas
+    de átomos y de los parametros dados.
+    Parámetros:
+        coords = lista de coordenadas x,y,z de los átomos (List of Tuples)
+        options.delta = distancia x,y,z entre puntos de la grilla (String: [float],[float],[float] )
+        options.shape = tamaño de la grilla (String: [int],[int],[int] )
+        options.resolution = igual distancia x,y,z entre puntos de la grilla (String: [float] )
+        options.increment = tamaño a incrementar, en métricas de resolución, la grilla (String: [float])
+    """
+    delta = None
+    resolution = None
+    shape = None
+    if options.delta != None:
+        delta = array(map(float,options.delta.split(',')))
+        if len(delta) != 3:
+            raise RuntimeError("Delta must be tree float values separated by commas.")
+    elif options.shape != None:
+        shape  = array(map(int,options.shape.split(',')))
+        if len(shape) != 3:
+            raise RuntimeError("Shape must be tree integer values separated by commas.")
+    elif options.resolution != None:
+        resolution = float(options.resolution)
+    else:
+        raise CommandError("Not define one of delta, resolution or shape values."
+                           " Can't create grid.")
+    increment = float(options.increment)
+
+    V = create_from_coords(coords, resolution=resolution, delta=delta, shape=shape, inc=increment, dtype=complex)
+
+    return V
+
+class CommandError(RuntimeError):
+    pass
+
+def command_atoms(options, args):
+    """
+    Lee un PDB y genera una lista de atomos con coordenadas (x,y,z)
+    radio de VDW y carga
+
+    options.forcefield: archivo prm con la descripción del campo de fuerza.
+    """
+    import csv, sys
+    if not len(args) in [1, 2]:
+        raise CommandError
+
+    S = Storage()
+    S.loadpdb(args[0])
+    if not options.forcefield:
+        forcefield = os.path.join(S.path, 'test', 'amber99.prm')
+    else:
+        forcefield = options.forcefield
+    S.loadprm(forcefield)
+    atoms = S.get_atoms(['x','y','z','radix','ffcharge.charge'])
+
+    print >> stderr, "[%i] Readed %i atoms" % (time(), len(atoms))
+
+    # TODO: Error, debería salir por excepción.
+    if len(atoms) == 0:
+        return
+
+    if len(args) == 1:
+        w = csv.writer(sys.stdout)
+    else:
+        w = csv.writer(open(args[1],'w'))
+
+    w.writerow(['index','x','y','z','radix','charge'])
+    w.writerows(atoms)
+
+    return
+
+def command_ace(options, args):
+    """
+    Lee un PDB y genera un archivo .npy de pares de enlaces asociados
+    con potenciales ACE
+    """
+    from mtk.energy.solvation import solvation_vol
+    import csv, sys
+    from numpy import save
+
+    if not len(args) in [2]:
+        raise CommandError
+
+    datfilename = args[0]
+    acefilename = args[1]
+    radius = float(options.radius)
+
+    S = Storage()
+    try:
+        S.loadpdb(datfilename)
+    except ValueError:
+        S.loadpqr(datfilename)
+
+    sol_vol = solvation_vol(S, radius=radius)
+    pairs = sol_vol.get_pairs()
+
+    save(acefilename, pairs)
+    return
+
+def devide(Points, Face, Relations, newPointId):
+    from numpy import sum
+    from numpy.linalg import norm
+    b = array(
+        [ Points[Face[0],:],
+          Points[Face[1],:],
+          Points[Face[2],:] ]
+    )
+    newPoint = sum(b, axis=0)
+    newPoint = newPoint/norm(newPoint)
+    newFaces = [
+        [ Face[0], Face[1], newPointId ],
+        [ Face[0], Face[2], newPointId ],
+        [ Face[1], Face[2], newPointId ]
+    ]
+    return newPoint, newFaces
+
+def command_rotations(options, args):
+    """
+    Construye una lista de rotaciones a partir de los parámetros dados.
+    Parámetros:
+        options.anglestep = paso intermedio entre rotaciones (String: [float])
+        args[0] = archivo .csv con la lista de direcciones a tener en cuenta (String)
+        args[1] = archivo .npy resultante (String)
+    """
+    from mtk.geometry.transformation import genRotationsByDirections
+    from numpy import save, radians
+    from numpy.linalg import norm
+    import csv
+
+    print "[%i] Start." % (time())
+
+    Dfd = csv.reader(open(args[0]))
+    D = array([ map(float, line) for line in Dfd ])
+    R = genRotationsByDirections(D, radians(float(options.anglestep)))
+
+    print "[%i] Number of rotations: %i" % (time(), len(R))
+
+    RL = array( R )
+
+    print "[%i] Saving result" % time()
+    save(args[1], RL)
+
+def command_geometry(options, args):
+    """
+    Construye una grilla con información geométrica.
+    Parámetros:
+        options.delta = distancia x,y,z entre puntos de la grilla (String: [float],[float],[float])
+        options.shape = tamaño de la grilla (String: [int],[int],[int])
+        options.resolution = igual distancia x,y,z entre puntos de la grilla (String: [float])
+        options.increment = tamaño a incrementar, en métricas de resolución, la grilla (String: [float])
+        options.score = lista de valores de score para el core, superficie y solvente en ese orden (String: [complex],[complex],[complex])
+        options.surface = ancho de la superficie de la molécula (String: [float])
+        args[0] = archivo de átomos a leer (String)
+        args[1] = archivo de volumen a escribir (String)
+    """
+    from mtk.energy.geocomp import geometry_complementary as sas_f
+    if not len(args) in [2]:
+        raise CommandError
+
+    print "[%i] Start." % (time())
+    t = time()
+
+    # Reading atoms file
+    atoms = array(load_atoms(args[0]))
+    print "[%i] Readed %i atoms" % (time(), len(atoms))
+
+    # Construct Grid
+    V = build_volume(atoms[:,1:4], options)
+
+    print "[%i] Grid:" % time()
+    print " shape:", V.shape
+    print " origin:", V._min
+    print " delta:", V.delta
+
+    # Calculate geometry
+    core, surf, solv = map(complex, options.score.split(','))
+    r_solv = float(options.surface)
+    for a in atoms:
+        V.put_ball(a[1:4], a[4],
+            lambda r,v: sas_f(r,v,
+                              core=core,
+                              surf=surf,
+                              solv=solv,
+                              r_core=a[4], # Radio de VDW
+                              r_solv=a[4] + r_solv))
+
+    # Output result
+    print "[%i] Saving result" % time()
+    V.dump(args[1], x_dict = {'time': time()-t})
+
+def command_electrostatic(options, args):
+    """
+    Construye una grilla con información electrostática.
+    Parámetros:
+        options.delta = distancia x,y,z entre puntos de la grilla (String: [float],[float],[float] )
+        options.shape = tamaño de la grilla (String: [int],[int],[int] )
+        options.resolution = igual distancia x,y,z entre puntos de la grilla (String: [float] )
+        op dat/$*.sol.dattions.increment = tamaño a incrementar, en métricas de resolución, la grilla (String: [float])
+        args[0] = archivo de átomos a leer (String)
+        args[1] = archivo del volumen a escribir (String)
+    """
+    if not len(args) in [2]:
+        raise CommandError
+
+    print "[%i] Start." % (time())
+    t = time()
+
+    # Reading atoms file
+    atoms = array(load_atoms(args[0]))
+    print "[%i] Readed %i atoms" % (time(), len(atoms))
+
+    # Construct Grid
+    V = build_volume(atoms[:,1:4], options)
+
+    print "[%i] Grid:" % time()
+    print " shape:", V.shape
+    print " origin:", V._min
+    print " delta:", V.delta
+
+    # Calculate electrostatic
+    #from mtk.energy.electrostatic import calc
+    from mtk.energy.electrostatic_c import calc
+
+    print "Charge:", atoms[:,-1].min(), atoms[:,-1].max()
+    print "Radius:", atoms[:,-2].min(), atoms[:,-2].max()
+    print "z:", atoms[:,-3].min(), atoms[:,-3].max()
+    print "y:", atoms[:,-4].min(), atoms[:,-4].max()
+    print "x:", atoms[:,-5].min(), atoms[:,-5].max()
+    print "count:", atoms[:,-6].min(), atoms[:,-6].max()
+
+    calc(V, atoms[:,1:])
+
+    if (V._data.min() == V._data.max()):
+        raise RuntimeError("Not enough entropy.")
+
+    # Output result
+    print "[%i] Saving result" % time()
+    V.dump(args[1], x_dict = {'time': time()-t})
+
+def command_solvatation(options, args):
+    """
+    Construye una grilla con información de solvatación.
+    Parámetros:
+        options.delta = distancia x,y,z entre puntos de la grilla (String: [float],[float],[float])
+        options.shape = tamaño de la grilla (String: [int],[int],[int])
+        options.resolution = igual distancia x,y,z entre puntos de la grilla (String: [float])
+        options.increment = tamaño a incrementar, en métricas de resolución, la grilla (String: [float])
+        args[0] = archivo de átomos a leer (String)
+        args[1] = archivo de pares ace a leer (String)
+        args[2] = archivo de volumen de la grilla real (String)
+        args[3] = archivo de volumen de la grilla compleja (String)
+    """
+    from mtk.energy.geocomp import geometry_complementary as sas_f
+    from mtk.geometry.vol import Volume, create_from_coords, cloneVolume, GridIterator
+    from mtk.signal import rxcorr
+    from numpy import load, round, int
+    from numpy.linalg import norm
+
+    if not len(args) in [4,6]:
+        raise CommandError
+
+    atomsfilename = args[0]
+    pairsfilename = args[1]
+    radius = float(options.radius)
+
+    print "[%i] Start." % (time())
+    t = time()
+
+    # Reading atoms and pairs file
+    atoms = array(load_atoms(atomsfilename))
+    print "[%i] Readed %i atoms" % (time(), len(atoms))
+    pairs = load(pairsfilename)
+    print "[%i] Readed %i pairs" % (time(), pairs.shape[0])
+
+    # Construct Grid
+    V = build_volume(atoms[:,1:4], options)
+
+    print "[%i] Grid:" % time()
+    print " shape:", V.shape
+    print " origin:", V._min
+    print " delta:", V.delta
+
+    # TODO
+    ext = array([ radius ] * 3)
+    A = Volume(V._min - ext, V._max + ext, V.res, init_array = zeros)
+    B = cloneVolume(A, init_array = zeros)
+
+    # Asigna pares
+    for p in pairs:
+        a = array(p[:3])
+        b = array(p[3:6])
+
+        if norm(a - b) > radius: continue
+
+        e = p[-1]
+        c = tuple(round(A.t((a+b)/2.0)))
+
+        A[c] = e
+
+    # True para aplicar filtro binario, sino sera gauseano.
+    if True:
+        # Filtro binario
+        #print "Filtro binario", B._min, B._max, B.cen, B.t(B._min)
+        B.put_ball(B._min, radius, lambda r, v: r <= radius and 1.0 or v)
+    else:
+        # Filtro gauseano
+        # http://en.wikipedia.org/wiki/Multivariate_normal_distribution
+        #print "Filtro gauseano", radius
+        G = lambda (x1, x2, x3), a, (m1, m2, m3), c: \
+            a * exp(((x1-m1)**2 + (x2-m2)**2 + (x3-m3)**2)/-c)
+        B.forallnodes(lambda X, v: G(X, 1, B.cen, 2*radius**2))
+
+    # Calculate solvatation
+    C = cloneVolume(A, def_array=rxcorr(A.A, B.A))
+
+    V.A = C.subgrid(V._min, V._max)
+
+    # Output result
+    print "[%i] Saving result" % time()
+    V.dump(args[2], x_dict = {'time': time()-t})
+
+    # Generating assimetric result
+    for X in atoms[:,1:4]:
+        c = tuple(round(V.t(X)))
+        if V.A[c].imag != 1: V.A[c] += 1j
+    V.dump(args[3], x_dict = {'time': time()-t})
+
+def command_xcorrelation(options, args):
+    """
+    Calcula la correlación entre dos volúmenes aplicando una transformacion dada
+    Parámetros:
+        options.scale = Factor de escala en que se realiza la correlación.
+        args[0] = Primer volumen. Archivo Volumen.
+        args[1] = Segundo volumen. Archivo Volumen.
+        args[2] = Archivo de rotaciones. Archivo NPY.
+        args[3] = Prefijo de los nombre de archivo para los volumenes resultantes.
+    """
+    from mtk.geometry.vol import Volume, load
+    from mtk.signal import rxcorr
+
+    print "[%i] Start." % (time())
+    t = time()
+    scale = float(options.scale)
+
+    # Load volums
+    A, mdA = load(args[0])
+    B, mdB = load(args[1])
+
+    # Calcule the minimal shape to rotate inside.
+    Ashape = array([max(A.shape)] * 3)
+    Bshape = array([max(B.shape)] * 3)
+
+    # Dejo fijo la grilla más grande y roto la más pequeña
+    if all(Ashape < Bshape):
+        T, mdT, Tshape = A, mdA, Ashape
+        A, mdA, Ashape = B, mdB, Bshape
+        B, mdB, Bshape = T, mdT, Tshape
+
+    # Generate equal volumns to correlate
+    Vsize = tuple(((Ashape + Bshape)*scale).flat)
+    Ap = A._min, A._max, 
+
+
+    Ap = zeros(Vsize, dtype=complex)
+    Bp = zeros(Vsize, dtype=complex)
+
+    # Centralizo la grilla más grande (A) y coloco el extremo de la más chica
+    # en los extremos.
+    Ap = BasicVolume(A.min - Vsize/A.delta, A.delta, zeros(Vsize, dtype=A.dtype))
+    Bp = BasicVolume(B.center, A.delta, zeros(Vsize, dtype=A.dtype))
+
+    # Copiamos el contenido de A en el centro de Ap y el contenido de B en sus
+    # extremos.
+    Ap.transfer(A)
+    Bp.transfer(B)
+
+    Vc = BasicVolume(A.min - Vsize/A.delta, A.delta, rxcorr(Ap._data, Bp._data))
+
+    print "[%i] Saving result" % time()
+    _inc = (array(B.shape)/2)/A.delta
+    _min = A._min - _inc
+    _max = A._max + _inc
+    Vc = Volume(_min, _max, delta=A.delta, def_array=Cp)
+    Vc.dump(args[2], x_dict = {'time': time()-t})
+
+    return
+
+
+    # Build static grid
+    Ao = array(B.shape) / 2.0
+    Ax = Ao + array(A.shape)
+    Ap[ Ao[0]:Ax[0], Ao[1]:Ax[1], Ao[2]:Ax[2] ] = A.A
+
+
+    # Build rotated grid
+    Bh = array(array(B.shape) / 2.0, dtype=int)
+    Be = Bh*2
+
+    Bp[:Bh[0],:Bh[1],:Bh[2]] = B[Bh[0]:,Bh[1]:,Bh[2]:][:Bh[0],:Bh[1],:Bh[2]]
+    Bp[:Bh[0],:Bh[1],-Bh[2]:] = B[Bh[0]:,Bh[1]:,:Bh[2]][:Bh[0],:Bh[1],:Bh[2]]
+    Bp[:Bh[0],-Bh[1]:,:Bh[2]] = B[Bh[0]:,:Bh[1],Bh[2]:][:Bh[0],:Bh[1],:Bh[2]]
+    Bp[:Bh[0],-Bh[1]:,-Bh[2]:] = B[Bh[0]:,:Bh[1],:Bh[2]][:Bh[0],:Bh[1],:Bh[2]]
+    Bp[-Bh[0]:,:Bh[1],:Bh[2]] = B[:Bh[0],Bh[1]:,Bh[2]:][:Bh[0],:Bh[1],:Bh[2]]
+    Bp[-Bh[0]:,:Bh[1],-Bh[2]:] = B[:Bh[0],Bh[1]:,:Bh[2]][:Bh[0],:Bh[1],:Bh[2]]
+    Bp[-Bh[0]:,-Bh[1]:,:Bh[2]] = B[:Bh[0],:Bh[1],Bh[2]:][:Bh[0],:Bh[1],:Bh[2]]
+    Bp[-Bh[0]:,-Bh[1]:,-Bh[2]:] = B[:Bh[0],:Bh[1],:Bh[2]][:Bh[0],:Bh[1],:Bh[2]]
+    Bp[-Bh[0]:,-Bh[1]:,-Bh[2]:] = B[:Bh[0],:Bh[1],:Bh[2]][:Bh[0],:Bh[1],:Bh[2]]
+
+    # Correlation
+    Cp = rxcorr(Ap, Bp)
+
+    # Output result
+    print "[%i] Saving result" % time()
+    _inc = (array(B.shape)/2)/A.delta
+    _min = A._min - _inc
+    _max = A._max + _inc
+    Vc = Volume(_min, _max, delta=A.delta, def_array=Cp)
+    Vc.dump(args[2], x_dict = {'time': time()-t})
+
+def command_dumplist(options, args):
+    """
+    Lista de una rotación todos los resultados de una conjunto de matrices.
+    Parámetros:
+        options.min = Valor mínimo geométrico aceptado
+        options.max = Valor máximo geométrico aceptado
+        args[0] = Volumen geométrica
+        args[1] = Volumen electrostática
+        args[2] = Volumen solvatación
+        args[3] = Listado de rotaciones, traslaciones y valores
+    """
+    from mtk.geometry.vol import Volume, load
+    from numpy import floor
+    import csv
+
+    _min = float(options.min)
+    _max = float(options.max)
+
+    print "[%i] Start." % (time())
+    t = time()
+
+    # Load volums
+    A, mdA = load(args[0])
+    B, mdB = load(args[1])
+    C, mdC = load(args[2])
+
+    print A.shape, B.shape, C.shape
+
+    w = csv.writer(open(args[6], 'w'))
+    def Filtering(X,v):
+        if _min <= v.real and v.real <= _max:
+            w.writerow(tuple(X) + (v, B[tuple(floor(B.t(X)))], C[tuple(floor(C.t(X)))]))
+
+    A.forallnodes(Filtering)
+
+def command_rmsd(options, args):
+    # TODO:
+    pass
+    
+def command_profilestats(options, args):
+    """
+    Muestra el resumen del profile de una ejecución.
+
+    args[0] : Nombre del archivo con el profile de una ejecución.
+    """
+    import hotshot, hotshot.stats
+
+    if not len(args) in [1]:
+        raise CommandError
+
+    stats = hotshot.stats.load(args[0])
+    stats.strip_dirs()
+    stats.sort_stats('time', 'calls')
+    stats.print_stats(30)
+
+def read_config(options, filename):
+    pass
+
+commands = {
+        'atoms': command_atoms,
+        'at': command_atoms,
+        'ace': command_ace,
+        'rot': command_rotations,
+        'rotations': command_rotations,
+        'geometry': command_geometry,
+        'geo': command_geometry,
+        'electrostatic': command_electrostatic,
+        'ele': command_electrostatic,
+        'solvatation': command_solvatation,
+        'sol': command_solvatation,
+        'crosscorrelation': command_xcorrelation,
+        'xcor': command_xcorrelation,
+        'profilestats': command_profilestats,
+        'ps': command_profilestats,
+        'dumplist': command_dumplist,
+        'dl': command_dumplist,
+        }
+
+_usage_ = "%prog [options] <command> [command options]"
+
+if __name__ == "__main__":
+    from optparse import OptionParser
+    parser = OptionParser(usage=_usage_, version="$Rev: 142 $"[5:-1])
+
+    parser.add_option("-c", "--config", action="store",
+            type="string", dest="config",
+            help="Read the configuration file.",
+            default="~/.mtkrc", metavar="CONFIG")
+    parser.add_option("-f", "--forcefield", action="store",
+            type="string", dest="forcefield",
+            help="Set witch file have force field information.",
+            default=None, metavar="FORCEFIELD")
+    parser.add_option("-s", "--shape", action="store",
+            type="string", dest="shape",
+            help="Set the shape of the grid. It's tree comma separated integer values (example: 192,192,192 ; not default).",
+            default=None, metavar="SHAPE")
+    parser.add_option("-d", "--delta", action="store",
+            type="string", dest="delta",
+            help="Set the delta of the grid. It's tree comma separated float values (example: 0.5,0.5,0.5 ; not default)",
+            default=None, metavar="DELTA")
+    parser.add_option("-r", "--resolution", action="store",
+            type="string", dest="resolution",
+            help="Set the resolution of the grid. It's a float value (default: 1.7)",
+            default=None, metavar="RESOLUTION")
+    parser.add_option("-i", "--increment", action="store",
+            type="string", dest="increment",
+            help="Set the incrementation in Amstrong of the grid. It's a float value (default: 2.0)",
+            default="2.0", metavar="INCREMENT")
+    parser.add_option("-p", "--profile", action="store",
+            type="string", dest="profile",
+            help="Enable profiling in the destination file (default: None)",
+            default=None, metavar="PROFILE")
+    parser.add_option("-S", "--score", action="store",
+            type="string", dest="score",
+            help="Setup scoring values (default: None)",
+            default=None, metavar="SCORE")
+    parser.add_option("-R", "--radius", action="store",
+            type="string", dest="radius",
+            help="Setup radius values (default: None)",
+            default=None, metavar="SCORE")
+    parser.add_option("-U", "--surface", action="store",
+            type="string", dest="surface",
+            help="Setup surface width of the molecule (default: None)",
+            default=None, metavar="SURFACE")
+    parser.add_option("-T", "--transformations", action="store",
+            type="string", dest="transformations",
+            help="List of transformation to use (default: None)",
+            default=None, metavar="SURFACE")
+    parser.add_option("-m", "--min", action="store",
+            type="string", dest="min",
+            help="Minimum accepted value (default: None)",
+            default=None, metavar="SURFACE")
+    parser.add_option("-M", "--max", action="store",
+            type="string", dest="max",
+            help="Maximun accepted value (default: None)",
+            default=None, metavar="SURFACE")
+    parser.add_option("-a", "--anglestep", action="store",
+            type="string", dest="anglestep",
+            help="angle step for rotations (default: 15)",
+            default="15", metavar="SURFACE")
+    parser.add_option("-x", "--scale", action="store",
+            type="string", dest="scale",
+            help="Scale factor (default: 0.5)",
+            default="0.5", metavar="SURFACE")
+
+    (options, args) = parser.parse_args()
+
+    try:
+        main = lambda : commands[args[0]](options, args[1:])
+
+        if options.config != None and os.path.exists(options.config):
+            import ConfigParser
+            config = ConfigParser.ConfigParser()
+            config.read(options.config)
+            options.resolution = config.get('common', 'resolution',
+                                            options.resolution)
+            options.increment = config.get('common', 'increment',
+                                           options.increment)
+            options.forcefield = config.get('common', 'forcefield',
+                                            options.forcefield)
+            options.score = config.get('common', 'score', options.score)
+            options.radius = config.get('common', 'radius', options.radius)
+            options.surface = config.get('common', 'surface', options.surface)
+            options.transformations = config.get('common', 'transformations',
+                                                 options.transformations)
+            options.min = config.get('common', 'min', options.min)
+            options.max = config.get('common', 'max', options.max)
+            options.anglestep = config.get('common', 'anglestep',
+                                           options.anglestep)
+            options.scale = config.get('common', 'scale', options.scale)
+
+        if options.profile != None:
+            import hotshot
+            profile = hotshot.Profile(options.profile)
+            profile.runcall(main)
+            profile.close()
+        else:
+            main()
+    except CommandError, e:
+        from sys import stderr
+        print >> stderr, e
+        parser.print_usage()
+    except AssignError, e:
+        print e, len(e.notassigned)
+        for a in e.notassigned:
+            print a
+

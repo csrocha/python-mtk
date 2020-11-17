@@ -1,0 +1,134 @@
+#!/usr/bin/python
+"""
+An example showing the norm and phase of an atomic orbital: isosurfaces of 
+the norm, with colors  displaying the phase.
+
+This example shows how you can apply a filter on one data set, and dislay
+a second data set on the output of the filter. Here we use the contour
+filter to extract isosurfaces of the norm of a complex field, and we
+display the phase of the field with the colormap.
+
+The field we choose to plot is a simplified version of the 3P_y atomic
+orbital for hydrogen-like atoms.
+
+The first step is to create a data source with two scalar datasets. The
+second step is to apply filters and modules, using the
+'set_active_attribute' filter to select on which data these apply.
+
+Creating a data source with two scalar datasets is actually slighlty
+tricky, as it requires some understanding of the layout of the datasets
+in TVTK. The reader is referred to :ref:`data-structures-used-by-mayavi`
+for more details.
+"""
+# Author: Gael Varoquaux <gael.varoquaux@normalesup.org> 
+# Copyright (c) 2008, Enthought, Inc.
+# License: BSD Style.
+
+# Create the data ############################################################
+import numpy as np
+import sys
+from optparse import OptionParser
+from mtk.geometry.vol import load
+
+_i = lambda x: np.array(map(round, x), dtype=int)
+
+# Parsing command line
+
+parser = OptionParser()
+parser.add_option("-o", "--output", dest="outfile", default=None,
+                  help="write figure to FILE", metavar="FILE")
+parser.add_option("-a", "--azimuth", dest="azimuth", default=None,
+                  help="set the azimuth of the view", metavar="ANGLE")
+parser.add_option("-e", "--elevation", dest="elevation", default=None,
+                  help="set the elevation of the view", metavar="ANGLE")
+parser.add_option("-r", "--rotate", dest="rotate", default=False,
+                  help="if set rotate 0:r:360, 0:r:180 over body", metavar="ANGLE")
+parser.add_option("-d", "--distance", dest="distance", default=None,
+                  help="set the distance of the view", metavar="UNITS")
+parser.add_option("-W", "--width", dest="width", default=900,
+                  help="set the width of the figure", metavar="PIXELS")
+parser.add_option("-H", "--height", dest="height", default=600,
+                  help="set the height of the figure", metavar="PIXELS")
+
+(options, args) = parser.parse_args()
+
+outfile = options.outfile
+azimuth = options.azimuth
+elevation = options.elevation
+distance = options.distance
+rotate = options.rotate
+size = (int(options.width), int(options.height))
+
+if azimuth != None: azimuth = float(azimuth)
+if elevation != None: elevation = float(elevation)
+if distance != None: distance = float(distance)
+if rotate != None: rotate = int(rotate)
+
+filename_body = args[0]
+filename_curvature = args[1]
+
+# Running
+
+volA, mdA = load(filename_body)
+volB, mdB = load(filename_curvature)
+
+nmin = volA.min
+nmax = volA.max
+
+Bslice = map(lambda (a,b): slice(a,b+1),
+                 zip(_i(volB.t(nmin)),_i(volB.t(nmax))))
+
+A = volA._data
+B = volB._data[Bslice]
+
+print A.shape
+print B.shape
+
+# Plot it ####################################################################
+from enthought.mayavi import mlab
+mlab.figure(1, fgcolor=(0, 0, 0), bgcolor=(1, 1, 1), size=(900,600))
+# We create a scalar field with the module of Phi as the scalar
+src = mlab.pipeline.scalar_field(A)
+
+# And we add the phase of Phi as an additional array
+# This is a tricky part: the layout of the new array needs to be the same
+# as the existing dataset, and no checks are performed. The shape needs
+# to be the same, and so should the data. Failure to do so can result in 
+# segfaults.
+src.image_data.point_data.add_array(np.real(B).T.ravel())
+#src.image_data.point_data.add_array(np.real(B._data).T.ravel())
+# We need to give a name to our new dataset.
+src.image_data.point_data.get_array(1).name = 'solid'
+# Make sure that the dataset is up to date with the different arrays:
+src.image_data.point_data.update()
+
+# We select the 'scalar' attribute, ie the norm of Phi
+src2 = mlab.pipeline.set_active_attribute(src,
+                                    point_scalars='scalar')
+
+# Cut isosurfaces of the norm
+contour = mlab.pipeline.contour(src2)
+
+# Now we select the 'angle' attribute, ie the phase of Phi
+contour2 = mlab.pipeline.set_active_attribute(contour,
+                                    point_scalars='solid')
+
+# And we display the surface. The colormap is the current attribute: the phase.
+mlab.pipeline.surface(contour2, colormap='spectral', vmax=1., vmin=0.)
+
+mlab.colorbar(title='Curvature', orientation='vertical', nb_labels=3)
+
+if rotate != None:
+    for a in np.arange(0,360,rotate):
+        for e in np.arange(0,180,rotate):
+            print "Rendering:", outfile % (a, e)
+            mlab.view(a,e,distance)
+            mlab.savefig(outfile % (a, e), size)
+else:
+    mlab.view(azimuth,elevation,distance)
+
+    if outfile != None:
+        mlab.savefig(outfile, size)
+    else:
+        mlab.show()
+

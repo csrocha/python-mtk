@@ -1,0 +1,41 @@
+#!/usr/bin/python
+# vim:expandtab:smartindent:tabstop=4:softtabstop=4:shiftwidth=4:
+
+from xml.etree.ElementTree import ElementTree
+import sys
+
+tree = ElementTree()
+E = tree.parse(sys.argv[1])
+
+class Objetive:
+    def __init__(self, objetive_id, rule, parameters):
+        self.objetive_id = oid
+        self.rule_id = rule_id
+        self.parameters = parameters
+
+    def execute(self):
+        command = self.rule['command']
+        print command
+
+class Rule:
+    def __init__(self, rule_id, parameters):
+        self.rule_id = rule_id
+        self._dict = parameters
+
+rules = [ R.findall('rule') for R in E.findall('rules') ]
+
+rules = [ Rule(r['id']) for R in E.findall('rules') ]
+
+for obj in E.findall('objetive'):
+        rule = 
+
+f = open(sys.argv[1])
+input = libxml2.inputBuffer(f)
+reader = input.newTextReader("experiment")
+ret = reader.Read()
+
+if ret != 1:
+    print "experiment: Error reading to first element"
+    sys.exit(1)
+
+

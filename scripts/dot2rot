@@ -1,0 +1,16 @@
+#!/usr/bin/python
+#
+# Convierte una lista de vectores con centro en el 0,0 y norma 1
+# en una lista de matrices de rotaciones
+#
+
+import sys
+import csv
+import numpy as np
+import mtk.geometry.transformation as tra
+
+D = csv.reader(open(sys.arg[1]))
+V = [ map(float, d) for d in D ]
+R = [ tra.rotationWithDirection(v) for v in V ]
+
+

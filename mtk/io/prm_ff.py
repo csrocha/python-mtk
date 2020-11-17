@@ -1,0 +1,294 @@
+#!/usr/bin/env python
+
+import re
+import csv
+import ply.yacc as yacc
+import ply.lex as lex
+from mtk.storage import normalizeTuple
+
+reserved = {
+   'forcefield' : 'FORCEFIELD',
+   'vdwtype' : 'VDWTYPE',
+   'radiusrule' : 'RADIUSRULE',
+   'radiustype' : 'RADIUSTYPE',
+   'radiussize' : 'RADIUSSIZE',
+   'epsilonrule' : 'EPSILONRULE',
+   'vdw-14-scale' : 'VDW_14_SCALE',
+   'chg-14-scale' : 'CHG_14_SCALE',
+   'dielectric' : 'DIELECTRIC',
+   'biotype' : 'BIOTYPE',
+   'atom' : 'ATOM',
+   'vdw' : 'VDW',
+   'vdw14' : 'VDW14',
+   'vdwpr' : 'VDWPR',
+   'hbond' : 'HBOND',
+   'bond' : 'BOND',
+   'bond5' : 'BOND5',
+   'bond4' : 'BOND4',
+   'bond3' : 'BOND3',
+   'electneg' : 'ELECTNEG',
+   'angle' : 'ANGLE',
+   'angle5' : 'ANGLE5',
+   'angle4' : 'ANGLE4',
+   'angle3' : 'ANGLE3',
+   'anglef' : 'ANGLEF',
+   'strbnd' : 'STRBND',
+   'ureybrad' : 'UREYBRAD',
+   'angang' : 'ANGANG',
+   'opbend': 'OPBEND',
+   'opdist': 'OPDIST',
+   'improper': 'IMPROPER',
+   'imptors': 'IMPTORS',
+   'torsion': 'TORSION',
+   'torsion5': 'TORSION5',
+   'torsion4': 'TORSION4',
+   'pitors': 'PITORS',
+   'strtors': 'STRTORS',
+   'tortors': 'TORTORS',
+   'charge': 'CHARGE',
+   'dipole': 'DIPOLE',
+   'dipole5': 'DIPOLE5',
+   'dipole4': 'DIPOLE4',
+   'dipole3': 'DIPOLE3',
+   'multipole': 'MULTIPOLE',
+   'polarize': 'POLARIZE',
+   'piatom': 'PIATOM',
+   'pibond': 'PIBOND',
+   'pibond5': 'PIBOND5',
+   'pibond4': 'PIBOND4',
+   'metal': 'METAL',
+}
+
+#
+# LEX
+#
+
+tokens = [
+        'INTEGER',
+        'ID',
+        'DESC',
+        'REAL',
+        'COMMENT',
+        'EOL',
+        ] + list(reserved.values())
+
+def t_INTEGER(t):
+    r'[-+]?\d+(?![\.\d])'
+    t.value = int(t.value)
+    return t
+
+def t_REAL(t):
+    r'[-+]?(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?'
+    t.value = float(t.value)
+    return t
+
+def t_DESC(t):
+    r'"[^"]*"'
+    t.value = t.value[1:-1]
+    return t
+
+def t_COMMENT(t):
+    r'(\#|!!).*(?=\n)'
+    return # Ignored
+
+def t_ID(t):
+    r'\w[\w\*\+\-]*(?!\.\,)'
+    t.type=reserved.get(t.value, 'ID')
+    return t
+
+def t_EOL(t):
+    r'\n+'
+    t.lexer.lineno += len(t.value)
+    return t
+
+def t_error(t):
+    print "Illegal character '%s'" % t.value[0]
+    t.lexer.skip(1)
+
+t_ignore = ' \t'
+
+#
+# YACC
+#
+
+def p_expression_none(p):
+    """
+    expression : empty EOL
+               | COMMENT EOL
+    """
+    pass
+
+def p_expression(p):
+    """
+    expression : simplevalue EOL
+               | multiplevalues EOL
+    """
+    p[0] = p[1]
+    pass
+
+def p_empty(p):
+    'empty :'
+    pass
+ 
+def p_simplevalue(p):
+    """
+    simplevalue : FORCEFIELD ID
+                | VDWTYPE ID
+                | RADIUSRULE ID
+                | RADIUSTYPE ID
+                | RADIUSSIZE ID
+                | EPSILONRULE ID
+                | VDW_14_SCALE REAL
+                | CHG_14_SCALE REAL
+                | DIELECTRIC REAL
+    """
+    p[0] = ( p[1], p[2] )
+
+def p_multiplevalues(p):
+    """
+    multiplevalues : BIOTYPE idx1 ID DESC INTEGER
+                   | ATOM idx1 INTEGER ID DESC INTEGER REAL INTEGER
+                   | VDW idx1 REAL REAL
+                   | VDW idx1 REAL REAL INTEGER
+                   | VDW14 idx1 REAL REAL
+                   | VDWPR idx2 REAL REAL
+                   | HBOND idx2 REAL REAL
+                   | BOND idx2 REAL REAL
+                   | BOND5 idx2 REAL REAL
+                   | BOND4 idx2 REAL REAL
+                   | BOND3 idx2 REAL REAL
+                   | ELECTNEG idx3 REAL
+                   | ANGLE idx3 REAL REAL REAL REAL
+                   | ANGLE idx3 REAL REAL
+                   | ANGLE5 idx3 REAL REAL REAL REAL
+                   | ANGLE4 idx3 REAL REAL REAL REAL
+                   | ANGLE3 idx3 REAL REAL REAL REAL
+                   | ANGLEF idx3 REAL REAL REAL
+                   | STRBND idx3 REAL REAL
+                   | UREYBRAD idx3 REAL REAL
+                   | ANGANG idx1 REAL REAL REAL
+                   | OPBEND idx4 REAL
+                   | OPDIST idx4 REAL
+                   | IMPROPER idx4 REAL REAL
+                   | PITORS idx2 REAL
+                   | STRTORS idx4 REAL REAL REAL
+                   | CHARGE idx1 REAL
+                   | DIPOLE idx2 REAL REAL
+                   | DIPOLE5 idx2 REAL REAL
+                   | DIPOLE4 idx2 REAL REAL
+                   | DIPOLE3 idx2 REAL REAL
+                   | MULTIPOLE idx4
+                   | POLARIZE idx1 REAL REAL
+                   | PIATOM idx1 REAL REAL REAL
+                   | PIBOND idx2 REAL REAL
+                   | PIBOND5 idx2 REAL REAL
+                   | PIBOND4 idx2 REAL REAL
+                   | METAL DESC
+    """
+    p[0] = ( p[1], (p[2], [p[3:]]) )
+
+def p_multiplevalues_torparams(p):
+    """
+    multiplevalues : IMPTORS idx4 torparams
+                   | TORSION idx4 torparams
+                   | TORSION5 idx4 torparams
+                   | TORSION4 idx4 torparams
+    """
+    p[0] = (p[1], (p[2], p[3]))
+
+def p_multiplevalues_params(p):
+    """
+    multiplevalues : TORTORS idx5 INTEGER INTEGER INTEGER tortorparams
+    """
+    p[0] = (p[1], (p[2] + p[3:6],  p[6]))
+
+def p_idx1(p):
+    """
+    idx1 : INTEGER
+    idx2 : INTEGER INTEGER
+    idx3 : INTEGER INTEGER INTEGER
+    idx4 : INTEGER INTEGER INTEGER INTEGER
+    idx5 : INTEGER INTEGER INTEGER INTEGER INTEGER
+    """
+    p[0] = normalizeTuple(p[1:])
+
+def p_tortorparams_item(p):
+    """
+    tortorparams : torpar
+    torparams : torpar
+    """
+    p[0] = p[1]
+
+def p_torparams_list(p):
+    """
+    torparams : torparams torpar
+    tortorparams : torparams tortorpar
+    """
+    p[0] = p[1] + p[2]
+
+def p_torpar(p):
+    """
+    torpar : REAL REAL INTEGER
+    tortorpar : REAL REAL REAL
+    """
+    p[0] = [ p[1:], ]
+
+def p_error(p):
+    raise AssertionError("Syntax error in input!" + str(p) + str(yacc.token()))
+
+def read(infile, debug=False):
+    """
+    Read prm file and return a list dict of key, value stored in the file.
+
+    >>> from pkg_resources import resource_filename
+    >>> filename = resource_filename('mtk', 'data/test/amber.prm')
+    >>> prmdata = read(open(filename))
+    >>> prmdata.keys()
+    ['angle', 'vdw', 'radiustype', 'biotype', 'chg-14-scale', 'vdw-14-scale', 'charge', 'imptors', 'torsion', 'ureybrad', 'atom', 'forcefield', 'radiussize', 'vdwtype', 'bond', 'radiusrule', 'dielectric', 'epsilonrule']
+
+    """
+    lex.lex(debug=debug)
+    yacc.yacc(debug=debug)
+
+    rt = {}
+
+    inliterature = False
+    for l in infile:
+        if "Literature References" in l:
+            inliterature = True
+        if inliterature:
+            inliterature = not "Atom Type Definitions" in l
+        else:
+            item = yacc.parse(l, debug=debug)
+            if item != None:
+                key, data = item
+                if type(data) == tuple:
+                    id, values = data
+                    if key not in rt: rt[key] = []
+                    rt[key].append((id, values))
+                else:
+                    rt[key] = data
+            pass
+    return rt
+
+def readtables(filename):
+    """
+    """
+    file = open(filename)
+    data = csv.DictReader(file)
+    table = {}
+    for row in data:
+        if row['name'][:2] == 'ff':
+            table[row['name'][2:]] = re.findall(r'(\w+)\s+\w+[^,]*,?',
+                                              row['columns'])
+    return table
+
+def test_suite():
+    import doctest
+    return doctest.DocTestSuite()
+
+if __name__ == "__main__":
+    import unittest
+    runner = unittest.TextTestRunner()
+    runner.run(test_suite())
+

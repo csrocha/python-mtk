@@ -1,0 +1,92 @@
+#!/usr/bin/python
+
+from matplotlib import pylab
+import numpy as np
+import numpy.ma as ma
+from mtk.geometry.vol import load
+
+def histOutline(dataIn, *args, **kwargs):
+    """
+    Make a histogram that can be plotted with plot() so that
+    the histogram just has the outline rather than bars as it
+    usually does.
+
+    Example Usage:
+    binsIn = numpy.arange(0, 1, 0.1)
+    angle = pylab.rand(50)
+
+    (bins, data) = histOutline(binsIn, angle)
+    plot(bins, data, 'k-', linewidth=2)
+
+    """
+
+    (histIn, binsIn) = np.histogram(dataIn, *args, **kwargs)
+
+    stepSize = binsIn[1] - binsIn[0]
+
+    bins = np.zeros(len(binsIn)*2 + 2, dtype=np.float)
+    data = np.zeros(len(binsIn)*2 + 2, dtype=np.float)
+    for bb in range(len(binsIn)):
+        bins[2*bb + 1] = binsIn[bb]
+        bins[2*bb + 2] = binsIn[bb] + stepSize
+        if bb < len(histIn):
+            data[2*bb + 1] = histIn[bb]
+            data[2*bb + 2] = histIn[bb]
+
+    bins[0] = bins[1]
+    bins[-1] = bins[-2]
+    data[0] = 0
+    data[-1] = 0
+
+    return (bins, data)
+
+_i = lambda x: np.array(map(round, x), dtype=int)
+
+def loadVolumes(fileA, fileB):
+    volA, mdA = load(fileA)
+    volB, mdB = load(fileB)
+
+    nmin = volA.min
+    nmax = volA.max
+
+    Bslice = map(lambda (a,b): slice(a,b+1),
+                     zip(_i(volB.t(nmin)),_i(volB.t(nmax))))
+
+    A = volA._data
+    B = volB._data[Bslice]
+
+    return A, B
+
+def hist(filtrename, filenames, fileresult):
+
+    datagroup = []
+    for filename in filenames:
+        print "Loading %s." % filename
+        A, B = loadVolumes(filtrename, filename)
+        X = A * B
+        X = X.flatten()
+
+        print "Processing."
+
+        data = ma.masked_array(X, mask=(X == 0))
+        data = ma.compressed(data)
+        data = data.real
+
+        print "Median: ", np.median(data)
+        print "Variance: ", np.var(data)
+
+        datagroup.append(data)
+
+    bins = np.linspace(0, 1, 20)
+    print "Plot."
+
+    datagroup = np.array(datagroup).T
+
+    n, bins, patches = pylab.hist(datagroup,bins,histtype='bar')
+
+    pylab.savefig(fileresult)
+
+if __name__ == "__main__":
+    import sys
+    hist(sys.argv[1], sys.argv[2:-1], sys.argv[-1])
+

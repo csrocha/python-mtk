@@ -1,0 +1,53 @@
+#!/usr/bin/python
+# vim:expandtab:smartindent:tabstop=4:softtabstop=4:shiftwidth=4:
+
+from mtk.io.ply_ff import load_ply
+from mtk.io.vtk_ff import writer
+from mtk.log import log
+import sys, os
+
+_usage_ = """
+Convert polygon file type from ply to vtp file type.
+
+ply2vtp [ply input filename] [vtp output filename]
+"""
+
+def ply2vtp(ply_fn, vtp_fn):
+    vertexs, faces = load_ply(open(ply_fn))
+    points = vertexs[:,:3]
+    if vertexs.shape[1] == 6:
+        log.info("Data has normals")
+        scalars = None
+        vectors = vertexs[:,3:]
+    elif vertexs.shape[1] > 6:
+        log.info("Data has scalars")
+        scalars = vertexs[:,3].flatten()
+        vectors = None
+    else:
+        log.info("Only polygons")
+        scalars = None
+        vectors = None
+    W = writer(points=points, polygons=faces, scalars=scalars, vectors=vectors)
+    W.write(vtp_fn)
+
+if __name__ == "__main__":
+    if len(sys.argv) == 0:
+        print _usage_
+        exit(-1)
+    try:
+        ply_in_filename = sys.argv[1]
+        vtp_out_filename = sys.argv[2]
+    except:
+        print "ERROR: Invalid parameters"
+        print _usage_
+        log.error("Shell command '%s'" % ' '.join(sys.argv))
+        exit(-1)
+
+    log.info("Starting conversion from ply filetype to vtp")
+    log.info("Shell command '%s'" % ' '.join(sys.argv))
+    log.info("Work path '%s'" % os.getcwd())
+
+    ply2vtp(ply_in_filename, vtp_out_filename)
+
+    log.info("Stop conversion from ply filetype to vtp")
+

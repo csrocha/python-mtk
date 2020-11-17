@@ -1,0 +1,346 @@
+#!/usr/bin/env python
+# -*- coding: ISO-8859-1 -*-
+# $Id: drawmol.py 93 2009-06-15 14:06:18Z cristian_docking $
+#
+#  Copyright (C) 2009   Cristian S. Rocha (crocha@dc.uba.ar)
+#  Licensed to PSF under a Contributor Agreement.
+_usage_ =\
+"""
+draw show protein properties using mayavi tool
+
+Usage:
+    draw [whatdraw] [options] <pdb filename> [pdb filename]
+
+whatdraw:
+    com    Draw the complementary function of the protein
+    sol    Draw the solvent function of the protein
+    ele    Draw the electrostatic function of the protein
+
+options for com:
+    -r --res     Volume resolution [default 1.7]
+    -e --ext     Volume extension over protein size [default 3.0]
+    -c --core    Core value [default -100] 
+    -s --surf    Surface value [default 50] 
+    -o --solv    Solvent value [default 0]
+    -O --output  Output vti filename to read with mayavi2 
+
+options for sol:
+    -r --res     Volume resolution [default 1.7]
+    -O --output  Output vti filename to read with mayavi2 
+
+options for ele:
+    -r --res     Volume resolution [default 1.7]
+    -O --output  Output vti filename to read with mayavi2 
+"""
+
+import sys
+import os.path
+from time import time
+from sys import stderr
+
+try:
+    import wxversion
+    wxversion.ensureMinimal('2.6')
+except ImportError:
+    pass
+
+try:
+    from enthought.mayavi.plugins.app import Mayavi #, NONGUI_PLUGIN_DEFINITIONS
+except ImportError:
+    from enthought.mayavi.app import Mayavi #, NONGUI_PLUGIN_DEFINITIONS
+
+from numpy import array, hstack, min, max, concatenate
+
+try:
+    import mtk
+except ImportError:
+    print "WARNING: MTK is not installed. Looking for package dir."
+    if os.path.exists("build/lib/mtk"):
+        print "Found in build/lib"
+        sys.path.append("build/lib")
+    elif os.path.exists("mtk"):
+        print "Found in work dir"
+        sys.path.append(".")
+    import mtk
+
+from mtk.energy.geocomp import geometry_complementary as sas_f
+from mtk.geometry.vol import Volume, create_from_coords
+from mtk.io.pdb_ff import reader
+from mtk.view.vol import view as mtkview
+
+class DrawMol(Mayavi):
+    def __init__(self, f, filename=None):
+        Mayavi.__init__(self)
+        self.draw_function=f
+        self.filename=filename
+
+    def run(self):
+        script = self.script
+        M = self.draw_function(script)
+        if self.filename!=None:
+            from mtk.io.vtk_ff import writer
+            w = writer(M)
+            w.write(self.filename)
+        pass
+
+def comfill(filename, resolution=1.7, extend=3.0, core=1+10j, surf=10+1j, solv=0):
+    pdb = reader(open(filename))
+    C = pdb.get_coords()
+    V = create_from_coords(C, resolution, extend, dtype=complex)
+    # TODO: El radio de los átomos debe corresponder al radio VW del atómo
+    t = time()
+    for c in C: V.put_atom(c, 2.0, lambda r,v: sas_f(r,v,core=core,surf=surf,solv=solv,r_core=1.0, r_solv=2.5))
+    print >> stderr, "Process time:", time()-t
+    return V, C
+
+def correlateVol(V, U):
+    from numpy.fft import fftn, ifftn
+    from numpy import conj
+    from numpy import zeros
+    from mtk.signal import xcorr
+    assert(V.res == U.res)
+    res = V.res
+    assert(V.dtype == U.dtype)
+    dtype = V.dtype
+
+    wshape = tuple(array(V.A.shape) + array(U.A.shape)*2)
+    #print wshape
+    W1 = zeros(wshape, dtype)
+    W2 = zeros(wshape, dtype)
+    W1[:U.A.shape[0],
+       :U.A.shape[1],
+       :U.A.shape[2]] = U.A
+    W2[U.A.shape[0]:U.A.shape[0]+V.A.shape[0],
+       U.A.shape[1]:U.A.shape[1]+V.A.shape[1],
+       U.A.shape[2]:U.A.shape[2]+V.A.shape[2]] = V.A
+    #print W1.min(), W1.max(), W2.min(), W2.max()
+    #W1.real.tofile("W1.real.txt", sep=" ")
+    #W1.imag.tofile("W1.imag.txt", sep=" ")
+    #W2.real.tofile("W2.real.txt", sep=" ")
+    #W2.imag.tofile("W2.imag.txt", sep=" ")
+    W = xcorr(W1.conjugate(), W2)
+    #print "::", W.min(), W.max()
+    # Crea volumen
+    Vsize = V.max - V.min
+    Usize = U.max - U.min
+    VWmin = V.min - Usize
+    VWmax = VWmin + array(W.shape)*V.res
+    VW = Volume(VWmin, VWmax, V.res, def_array=W.real)
+    return VW
+
+def com(scene, filename, resolution=1.7, extend=3.0, core=-100, surf=50,
+        solv=0, versus=None):
+    """Complementary function grid generator"""
+
+    V, C = comfill(filename, resolution=resolution, extend=extend,
+            core=core, surf=surf, solv=solv)
+    if versus!=None:
+        U, Cp = comfill(versus, resolution, extend, core, surf, solv)
+        W = correlateVol(V, U)
+        C = concatenate((C, Cp + concatenate((W.min - U.min, [1]))))
+        # C.tofile("C.txt", sep=" ")
+    else:
+        # V.A.tofile("A.txt", sep=',')
+        W = V
+
+    Atoms = hstack((C, array([[3]]*C.shape[0])))
+    Atoms.tofile("Atoms.txt", sep=",")
+    mtkview(W, scene=scene, atoms=Atoms)
+    return V.A.real
+
+# resname_atomname_mol,molecule,"resName, name"
+# atom_cont,equivalents,"aa,atom"
+def solfill(filename, storage, resolution = 1.7, extend=6.0):
+    """Complete the grid for Solvent calculation"""
+    from mtk.energy.solvation import solvation_vol
+    storage.loadpdb(filename, pdbid=filename)
+    C = storage.get_coords(pdbid=filename) # TODO: Coordinar los nombres de get_coords
+    V = create_from_coords(C, resolution, extend)
+    t = time()
+    V.forallnodes(solvation_vol(storage, extend, pdbid=filename))
+    for c in C: V.put_atom(c, resolution, lambda r,v: v+1j)
+    print >> stderr, "Process time:", time()-t
+    return V, C
+
+def sol(scene, filename, resolution = 1.7, extend=6.0, versus=None):
+    """Solvent function grid generator"""
+    from mtk.storage import Storage
+
+    S = Storage()
+    V, C = solfill(filename, S, resolution=resolution, extend=extend)
+    if versus != None:
+        U, Cp = solfill(filename, S, resolution=resolution, extend=extend)
+        W = correlateVol(V, U)
+        C = concatenate((C, Cp + concatenate((W.min - U.min, [1]))))
+    else:
+        W = V
+
+    Atoms = hstack((C, array([[3]]*C.shape[0])))
+    Atoms.tofile("Atoms.txt", sep=",")
+    mtkview(W, scene=scene, atoms=Atoms)
+    return V.A.real
+
+def elefill(filename, storage, resolution = 1.7, extend=6.0):
+    """Complete the grid for Electrostatic calculation"""
+    from mtk.energy.solvation import solvation_vol
+    storage.loadpdb(filename, pdbid=filename)
+    C = storage.get_coords(pdbid=filename) # TODO: Coordinar los nombres de get_coords
+    V = create_from_coords(C, resolution, extend)
+    t = time()
+    V.forallnodes(solvation_vol(storage, extend, pdbid=filename))
+    for c in C: V.put_atom(c, resolution, lambda r,v: v+1j)
+    print >> stderr, "Process time:", time()-t
+    return V, C
+
+def ele(scene, filename, resolution = 1.7, extend=6.0, versus=None):
+    """Electrostatic function grid generator"""
+    from mtk.storage import Storage
+
+    S = Storage()
+    V, C = elefill(filename, S, resolution=resolution, extend=extend)
+    if versus != None:
+        U, Cp = elefill(filename, S, resolution=resolution, extend=extend)
+        W = correlateVol(V, U)
+        C = concatenate((C, Cp + concatenate((W.min - U.min, [1]))))
+    else:
+        W = V
+
+    Atoms = hstack((C, array([[3]]*C.shape[0])))
+    Atoms.tofile("Atoms.txt", sep=",")
+    mtkview(W, scene=scene, atoms=Atoms)
+    return V.A.real
+
+if __name__ == "__main__":
+    import getopt
+    import sys
+
+    if len(sys.argv) < 2:
+        print "\nERROR: Not enought parameters"
+        print _usage_
+        sys.exit()
+
+    if sys.argv[1] == 'com':
+        try:
+            opts, args = getopt.getopt(sys.argv[2:], "hr:e:c:s:o:O:", ["help", "res=", "ext=", "core=", "surf=", "solv=", "output="])
+            if not len(args) in [1, 2]:
+                print "\nERROR: no PDB filename given"
+                print _usage_
+                sys.exit()
+        except getopt.GetoptError, err:
+            # print help information and exit:
+            print str(err)
+            print _usage_
+            sys.exit(2)
+        resolution = 1.7
+        extend = 3.0
+        core = 1+100j
+        surface = 10+1j
+        solvent = 0
+        outputfilename = None
+        versus = None
+        for o, a in opts:
+            if o in ["-r", "--res"]:
+                resolution = eval(a)
+            elif o in ["-e", "--ext"]:
+                extension = eval(a)
+            elif o in ["-c", "--core"]:
+                core = eval(a)
+            elif o in ["-s", "--surf"]:
+                surface = eval(a)
+            elif o in ["-o", "--solv"]:
+                solvent = eval(a)
+            elif o in ["-O", "--output"]:
+                outputfilename = a
+            elif o in ("-h", "--help"):
+                print _usage_
+                sys.exit()
+            else:
+                print "\nERROR: Unhandled option"
+                print _usage_
+                sys.exit()
+
+        filename = args[0]
+        if len(args) > 1: versus = args[1]
+        dm = DrawMol(lambda scene: com(scene, filename, resolution=resolution, extend=extend,
+                core=core, surf=surface, solv=solvent, versus=versus), filename=outputfilename)
+        dm.main()
+    elif sys.argv[1] == 'sol':
+        try:
+            opts, args = getopt.getopt(sys.argv[2:], "hr:e:O:", ["help", "res=",
+            "ext=", "output="])
+            if not len(args) in [1, 2]:
+                print "\nERROR: no PDB filename given"
+                print _usage_
+                sys.exit()
+        except getopt.GetoptError, err:
+            # print help information and exit:
+            print str(err)
+            print _usage_
+            sys.exit(2)
+        resolution = 1.7
+        extension = 6.0
+        outputfilename = None
+        versus=None
+        for o, a in opts:
+            if o in ["-r", "--res"]:
+                resolution = eval(a)
+            elif o in ["-e", "--ext"]:
+                extension = eval(a)
+            elif o in ["-O", "--output"]:
+                outputfilename = a
+            elif o in ("-h", "--help"):
+                print _usage_
+                sys.exit()
+            else:
+                print "\nERROR: Unhandled option"
+                print _usage_
+                sys.exit()
+
+        filename = args[0]
+        if len(args) > 1: versus = args[1]
+        dm = DrawMol(lambda scene: sol(scene, filename, resolution, extension,
+                        versus=versus),
+                    filename=outputfilename)
+        dm.main()
+    elif sys.argv[1] == 'ele':
+        try:
+            opts, args = getopt.getopt(sys.argv[2:], "hr:e:O:", ["help", "res=",
+            "ext=", "output="])
+            if not len(args) in [1, 2]:
+                print "\nERROR: no PDB filename given"
+                print _usage_
+                sys.exit()
+        except getopt.GetoptError, err:
+            # print help information and exit:
+            print str(err)
+            print _usage_
+            sys.exit(2)
+        resolution = 1.7
+        extension = 6.0
+        outputfilename = None
+        versus=None
+        for o, a in opts:
+            if o in ["-r", "--res"]:
+                resolution = eval(a)
+            elif o in ["-e", "--ext"]:
+                extension = eval(a)
+            elif o in ["-O", "--output"]:
+                outputfilename = a
+            elif o in ("-h", "--help"):
+                print _usage_
+                sys.exit()
+            else:
+                print "\nERROR: Unhandled option"
+                print _usage_
+                sys.exit()
+
+        filename = args[0]
+        if len(args) > 1: versus = args[1]
+        dm = DrawMol(lambda scene: ele(scene, filename, resolution, extension,
+                        versus=versus),
+                    filename=outputfilename)
+        dm.main()
+    else:
+        print "\nERROR: Unhandled command"
+        print _usage_
+

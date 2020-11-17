@@ -1,0 +1,56 @@
+#!/usr/bin/python
+from __future__ import print_function
+from mtk.log import log
+from mtk.io.vtk_ff import reader
+from numpy import nanmin, nanmax, average, mean, std, var, array
+import sys, os
+import logging
+from StringIO import StringIO
+from datetime import datetime
+
+def stat(vtkfile, outfile):
+    log.info("Reading '%s'" % vtkfile)
+
+    r = reader()
+    data, inobj = r.read(vtkfile)
+    scalars = array(data['scalars'], float)
+
+    v_min = nanmin(scalars)
+    v_max = nanmax(scalars)
+    v_avg = average(scalars)
+    v_mean = mean(scalars)
+    v_std = std(scalars)
+    v_var = var(scalars)
+
+    log.info("Storing in file '%s'" % outfile)
+
+    if outfile is None:
+        out = sys.stdout
+    else:
+        out = open(outfile, 'a')
+
+    print("-<-", file=out)
+    print("Input file: %s" % vtkfile, file=out)
+    print("Min:  %5.10f" % v_min, file=out)
+    print("Max:  %5.10f" % v_max, file=out)
+    print("Avg:  %5.10f" % v_avg, file=out)
+    print("Mean: %5.10f" % v_mean, file=out)
+    print("Std:  %5.10f" % v_std, file=out)
+    print("Var:  %5.10f" % v_var, file=out)
+    print("->-", file=out)
+
+    out.close()
+
+if __name__ == "__main__":
+    log.info("Starting stat")
+    log.info("Shell command '%s'" % ' '.join(sys.argv))
+    log.info("Work path '%s'" % os.getcwd())
+
+    vtkfile = sys.argv[1]
+    outfile = sys.argv[2]
+
+    stat(vtkfile, outfile)
+
+    log.info("Stop stat execution")
+
+# vim:expandtab:smartindent:tabstop=4:softtabstop=4:shiftwidth=4:

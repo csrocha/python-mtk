@@ -1,0 +1,73 @@
+#!/usr/bin/python
+# vim:expandtab:smartindent:tabstop=4:softtabstop=4:shiftwidth=4:
+
+import sys, os
+import os.path as path
+from math import copysign
+from numpy import array, zeros, arange, float, abs, argmax, all
+from numpy import ndenumerate,round, dot, outer, arccos, pi, nan
+from numpy.linalg import det, norm
+from mtk.log import log
+from mtk.geometry.vol import BasicVolume
+from mtk.geometry.iter import face, line
+from mtk.geometry.planecut import cutfaces
+from mtk.geometry.triangle import triangle
+from mtk.geometry.sphere import sphere
+from mtk.geometry.intersection import triangle_sphere
+from mtk.geometry.line import segment
+from mtk.geometry.arc import arc
+from mtk.geometry.polygon import polygon
+from mtk.io.ply_ff import load_ply
+from mtk.io.vtk_ff import writer
+import sys
+import bisect as bs
+import logging
+
+def solidangles(plyfilename, outfilename, radius):
+    log.info("Loading")
+
+    vertexs, faces = load_ply(open(plyfilename))
+    vertexs = vertexs[:,0:3]
+
+    try:
+        P = polygon(vertexs, faces)
+    except ValueError:
+        import pdb; pdb.set_trace()
+        raise RuntimeError('Not all faces are triangles in your ply file')
+
+    l = float(len(P.v))
+    values = []
+    c = 0
+    for i in range(len(P.v)):
+        try:
+            values.append(P.area(i, radius))
+        except RuntimeError as m:
+            log.warning("Trouble to calculate curvature to vertex %i: '%s'" % (i, m))
+            values.append(nan)
+
+    log.info("Storing")
+    w = writer(points=vertexs, polygons=faces, scalars=values)
+    w.write(outfilename)
+
+_usage_ = """
+Calculate curvature to a body using cazals algorithm.
+
+cazalsconnolling [ply filename] [sphere radius] [vtk output filename]
+"""
+
+if __name__ == "__main__":
+    if len(sys.argv) != 4:
+        print _usage_
+
+    log.info("Starting connolling")
+    log.info("Shell command '%s'" % ' '.join(sys.argv))
+    log.info("Work path '%s'" % os.getcwd())
+
+    plyfile = sys.argv[1]
+    radius = float(sys.argv[2])
+    outfile = sys.argv[3]
+
+    solidangles(plyfile, outfile, radius)
+
+    log.info("Stop conolling execution")
+

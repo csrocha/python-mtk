@@ -1,0 +1,70 @@
+python-mtk=/home/crocha/Proyectos/crocha_doctorado/apps/python-mtk/trunk CD=. {
+ setup.py
+ experiments=experiments {
+  curvature=curvature {
+   data=data {
+    bun_zipper.ply
+    curvature.ply
+    papain.pdb
+    papain.ply
+    papain.pqr
+    papain.wrl
+    retinal.pdb
+   }
+   vol=vol {
+    Makefile
+   }
+  }
+ }
+ scripts=scripts {
+  connolly
+  crocha
+  dock
+  dot2rot
+  drawcurvature
+  drawmol
+  drawvol
+  dx2npy
+  fillvol
+  genvol
+  intersection
+  mtktool
+  ply2vol
+  prm2csv
+  rotate
+  solidangles
+  volhist
+  volrmsd
+ }
+ mtk=mtk CD="." filter="*.py" {
+  __init__.py
+  __version__.py
+  dock.py
+  forcefield.py
+  inferator.py
+  signal.py
+  storage.py
+  geometry=geometry CD="." {
+   __init__.py
+   filtre.py
+   intersection.py
+   iter.py
+   kdtree.py
+   line.py
+   linelineintersection.py
+   linesphereintersection.py
+   neighbours.py
+   planecut.py
+   rms.py
+   set.py
+   sphere.py
+   transformation.py
+   arc.py
+   triangle.py
+   trianglesphereintersection.py
+   vol.py
+   vol_cuda.py
+  }
+ }
+}
+

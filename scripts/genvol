@@ -1,0 +1,266 @@
+#!/usr/bin/env python
+# -*- coding: ISO-8859-1 -*-
+# $Id: drawmol.py 93 2009-06-15 14:06:18Z cristian_docking $
+#
+#  Copyright (C) 2009   Cristian S. Rocha (crocha@dc.uba.ar)
+#  Licensed to PSF under a Contributor Agreement.
+_usage_ =\
+"""
+generate volume matrix of a molecule
+
+Usage:
+
+    genvol <prefix> <pdb filename> <results path> [ff filename]
+
+"""
+import sys
+import os.path
+import pickle
+import getopt
+from time import time
+from sys import stderr
+from numpy import array, save, load, fix, ceil, zeros, round, prod, exp
+from numpy.linalg import norm
+
+try:
+    import mtk
+except ImportError:
+    print "WARNING: MTK is not installed. Looking for package dir."
+    if os.path.exists("build/lib/mtk"):
+        print "Found in build/lib"
+        sys.path.append("build/lib")
+    elif os.path.exists("mtk"):
+        print "Found in work dir"
+        sys.path.append(".")
+    import mtk
+
+from mtk.energy.geocomp import geometry_complementary as sas_f
+from mtk.geometry.vol import Volume, create_from_coords, cloneVolume, GridIterator
+from mtk.io.pdb_ff import reader
+from mtk.storage import Storage
+from mtk.energy.solvation import solvation_vol
+from mtk.signal import rxcorr
+
+def genGeometry(storage, V, filename='geo.npy', core=-10, surf=10, solv=0, r_solv=1.5):
+    atoms = array(storage.get_atoms(['x','y','z','radix','ffcharge.charge']))
+    for a in atoms:
+        V.put_ball(a[0:3], a[3],
+            lambda r,v: sas_f(r,v,
+                              core=core,
+                              surf=surf,
+                              solv=solv,
+                              r_core=a[3], # Radio de VDW
+                              r_solv=a[3] + r_solv))
+
+    save(filename, V.A)
+
+def genSolvatation1(storage, V, filename="sol.npy",
+                    precalculated_ace="sol.ace.npy", radius=6.0):
+    import sys
+    import mtk.geometry.kdtree as kdtree
+
+    # Genera la base de datos para capturar los pares
+    print "Precalculated ACE:", precalculated_ace
+    print "Storing in:", filename
+    print "[%f] Solving pairs" % time()
+    if os.path.exists(precalculated_ace):
+        pairs = load(precalculated_ace)
+    else:
+        S = solvation_vol(storage, radius=radius)
+        pairs = S.get_pairs()
+        save(precalculated_ace, pairs)
+
+    # Ponemos los pares en la matriz
+    print "[%f] Starting drawing in matrix" % time()
+    toslice = lambda x: tuple(map(int, round(V.t(x))))
+
+    from numpy import zeros, ndenumerate
+    from numpy.linalg import norm
+
+    c = 0
+    for p in pairs:
+        a = array(p[:3])
+        b = array(p[3:6])
+        e = p[-1]
+        c = c + 1
+
+        box = [ array(map(max,zip(a,b))) - radius,
+                array(map(min,zip(a,b))) + radius ]
+        gbox = map(V.t, box)
+        gbox = [ ceil(gbox[0]), fix(gbox[1]) ]
+
+        nodea = toslice(a)
+        nodeb = toslice(b)
+        if V[nodea].imag == 0: V[nodea] += -1j
+        if V[nodeb].imag == 0: V[nodeb] += -1j
+
+        sslice = tuple(map(lambda x: slice(*x),zip(*tuple(map(tuple, gbox)))))
+
+        for index, v in ndenumerate(V.A[sslice]):
+            x = box[0] + index * V.delta
+            if  norm(a - x) < radius and norm(b - x) < radius:
+                try:
+                    V.A[sslice][index] += e
+                except IndexError:
+                    print ":: Indexing with base ", sslice, " and subindex ", index, " invalid"
+                    pass
+
+    print "[%f] Pairs numbers" % c
+    # Grabamos la matriz
+    save(filename, V.A)
+
+    print "[%f] End" % time()
+    return
+
+def genSolvatation2(storage, V, filename="sol.npy",
+                    precalculated_ace="sol.ace.npy", radius=6.0):
+    """
+    Calculate desolvatation energies using Atomic Contact Energies (ACE).
+
+    1: Zhang C, Vasmatzis G, Cornette JL, DeLisi C. Determination of atomic
+    desolvation energies from the structures of crystallized proteins. J Mol Biol.
+    1997 Apr 4;267(3):707-26. PubMed PMID: 9126848.
+    """
+    ext = array([ radius ] * 3)
+    A = Volume(V._min - ext, V._max + ext, V.res, init_array = zeros)
+    B = cloneVolume(A, init_array = zeros)
+
+    S = solvation_vol(storage, radius=radius)
+    for p in S.get_pairs():
+        a = array(p[:3])
+        b = array(p[3:6])
+
+        if norm(a - b) > radius: continue
+
+        e = p[-1]
+
+        A[tuple(map(int, round(A.t((a + b) / 2.0))))] = e
+
+    #import pdb; pdb.set_trace()
+
+    if True:
+        # Filtro binario
+        print "Filtro binario", B.min, B.max, B.cen, B.t(B.min)
+        B.put_ball(B.min, radius, lambda r, v: r <= radius and 1.0 or v)
+        B.dump("binario.dat", "binario.npy")
+    else:
+        # Filtro gauseano
+        # http://en.wikipedia.org/wiki/Multivariate_normal_distribution
+        print "Filtro gauseano", radius
+        G = lambda (x1, x2, x3), a, (m1, m2, m3), c: \
+            a * exp(((x1-m1)**2 + (x2-m2)**2 + (x3-m3)**2)/-c)
+        B.forallnodes(lambda X, v: G(X, 1, B.cen, 2*radius**2))
+        B.dump("gauss.dat", "gauss.npy")
+
+    C = cloneVolume(A, def_array=rxcorr(A.A, B.A))
+
+    save(filename, C.subgrid(V._min, V._max))
+
+def genElectrostatic(storage, V, filename="ele.npy", atoms=None):
+    V.A = zeros(V.shape)
+
+    if atoms == None:
+        atoms = array(storage.get_atoms(['x','y','z','radix','ffcharge.charge']))
+
+    import csv
+
+    F = open("test.txt", 'w')
+    W = csv.writer(F)
+    W.writerows(atoms)
+    return
+
+    for a in atoms:
+        x = array(a[0:3])
+        V.A[tuple(map(int, round(V.t(x))))] = a[4]
+
+    #save(filename, A)
+    F = open('test.txt', 'w')
+    for i in V.A.flat:
+        print >> F, i
+
+def main(prefix, molecule, forcefield, path):
+    print "[%f] Starting" % time()
+    S = Storage()
+
+    resolution = 0.5
+    extend = 6.0
+    filetype = 'pqr'
+
+    print "[%f] Updating storage system" % time()
+    if filetype == 'pdb':
+        S.loadpdb(molecule)
+        if forcefield == None:
+            forcefield = os.path.join(S.path, 'test', 'amber99.prm')
+        S.loadprm(forcefield)
+        atoms = array(S.get_atoms(['x','y','z','radix','ffcharge.charge']))
+    elif filetype == 'pqr':
+        S.loadpqr(molecule)
+        atoms = array(
+            list(S.do("SELECT x,y,z,occupancy FROM molecule"))
+        )
+
+    print "[%f] Get coordinates information" % time()
+    C = atoms[:,0:3]
+    V = create_from_coords(C, resolution=resolution, inc=extend, dtype=complex)
+    MD = V.metadata()
+    MD['natoms'] = len(atoms)
+    MD['resolution'] = resolution
+    MD['extension'] = extend
+    pickle.dump(V.metadata(), open(os.path.join(path, '%s.dat' % prefix), 'w'))
+
+    print "# atoms: %i" % len(atoms)
+    print "Grid size: %i, %i, %i" % tuple(V.shape)
+    print "Space size: %f, %f, %f" % tuple(V._max - V._min)
+    print "Resolution: %f" % resolution
+    print "Extension: %f" % extend
+
+    print "[%f] Generando Geometría" % time()
+    #genGeometry(S, V, '%s.geo.npy' % prefix)
+
+    print "[%f] Generando Solvatacion" % time()
+    #genSolvatation1(S, V, filename=os.path.join(path, '%s.sol1.npy' % prefix),
+    #                precalculated_ace=os.path.join(path, "%s.ace.npy" % prefix))
+    genSolvatation2(S, V, filename=os.path.join(path, '%s.sol2.npy' % prefix),
+                    precalculated_ace=os.path.join(path, "%s.ace.npy" % prefix))
+
+    print "[%f] Generando Electrostática" % time()
+    #genElectrostatic(S, V, '%s.ele.npy' % prefix, atoms=atoms)
+
+    print "[%f] Fin" % time()
+
+#   1) Calculo el box para un par a,b
+#   pmin = [ min(ax,bx), min(ay,by) ]
+#   pmax = [ max(ax,bx), min(ay,by) ]
+#   box  = [ (pmax-r, pmaxy-r), (pminx+r, pminy+r) ]
+#   gridbox =  [  |^ box0-o/s ^|, |_ box1-o/s _| ]
+#
+#   2) Aplicar los valores a los pares.
+
+
+if __name__ == "__main__":
+    if not len(sys.argv) in [3, 4]:
+        print "\nERROR: Not enought parameters"
+        print _usage_
+        sys.exit()
+
+    prefix = sys.argv[1]
+    molecule = sys.argv[2]
+    path = sys.argv[3]
+    if len(sys.argv) == 5:
+        forcefield = sys.argv[4]
+    else:
+        forcefield = None
+
+    if False:
+        import hotshot, hotshot.stats
+        prof = hotshot.Profile("genvol.prof")
+        prof.runcall(lambda : main(prefix, molecule, forcefield, path))
+        prof.close()
+
+        stats = hotshot.stats.load("genvol.prof")
+        stats.strip_dirs()
+        stats.sort_stats('time', 'calls')
+        stats.print_stats(20)
+    else:
+        main(prefix, molecule, forcefield, path)
+

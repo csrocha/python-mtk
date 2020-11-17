@@ -1,0 +1,46 @@
+#!/usr/bin/python
+
+from matplotlib import pylab
+import numpy as np
+import numpy.ma as ma
+from mtk.geometry.vol import load
+
+_i = lambda x: np.array(map(round, x), dtype=int)
+
+def loadVolumes(fileA, fileB):
+    volA, mdA = load(fileA)
+    volB, mdB = load(fileB)
+
+    nmin = volA.min
+    nmax = volA.max
+
+    Bslice = map(lambda (a,b): slice(a,b+1),
+                     zip(_i(volB.t(nmin)),_i(volB.t(nmax))))
+
+    A = volA._data
+    B = volB._data[Bslice]
+
+    return A, B
+
+def loadCurvatures(fileSurf, fileCurv):
+    A, B = loadVolumes(fileSurf, fileCurv)
+    C = A * B
+    return C
+
+def curvRMSD(A, B):
+    A = A.real.flatten()
+    B = B.real.flatten()
+    D = A - B
+    MSE = np.dot(D,D) / len(D)
+    RMSD = np.sqrt(MSE)
+    return RMSD
+
+if __name__ == "__main__":
+    import sys
+    print "Loading"
+    CA = loadCurvatures(sys.argv[1], sys.argv[2])
+    CB = loadCurvatures(sys.argv[3], sys.argv[4])
+    print "Processing"
+    RMSD = curvRMSD(CA, CB)
+    print sys.argv[2], sys.argv[4], RMSD
+

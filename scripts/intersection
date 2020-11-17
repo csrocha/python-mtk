@@ -1,0 +1,28 @@
+#!/usr/bin/python
+
+from mtk.geometry.vol import load as load_vol
+from mtk.geometry.vol import BasicVolume
+from mtk.geometry.iter import line
+from mtk.geometry.filtre import ConnollyFiltre
+from numpy import ndenumerate, zeros, array
+from numpy.fft import fftshift, ifftn, fftn
+
+_i = lambda x: array(map(round, x), dtype=int)
+
+if __name__ == "__main__":
+    import sys
+    print "Loading"
+    volA, md = load_vol(sys.argv[1])
+    volB, md = load_vol(sys.argv[2])
+    print "Intersection"
+    nmin = map(max, zip(volA.min, volB.min))
+    ndelta = volA.delta
+    #import pdb; pdb.set_trace()
+    nshape = map(min, zip(volA.shape, volB.shape))
+    nmax = nmin + nshape * ndelta
+    Aslice = map(lambda (a,b): slice(a,b), zip(_i(volA.t(nmin)),_i(volA.t(nmax))))
+    Bslice = map(lambda (a,b): slice(a,b), zip(_i(volB.t(nmin)),_i(volB.t(nmax))))
+    R = BasicVolume(nmin, ndelta, volA._data[Aslice] * volB._data[Bslice])
+    print "Storing"
+    R.dump(sys.argv[3])
+

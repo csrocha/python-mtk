@@ -1,0 +1,34 @@
+* Mayado, Muestreo, 
+
+* Herramientas
+
+- Pymol.
+- PDB2PQR.
+- 
+
+* Curvatura normalizada.
+
+* Tablas de comparación.
+
+** Cuerpo, Método, radio de muestreo, curvatura (mínima, máxima, media, mediana).
+
+
+
+
+** Cuerpo, RMSD entre métodos.
+
+Cuerpo, Size Grid, Method A, Radius ball, Method B, Radius ball, RMSD
+curvature, 100, con,  5, cro,  5, 0.0346343205892
+curvature, 100, con, 10, con,  5, 0.0172548216339
+curvature, 100, con,  5, cro, 10, 0.012422650313
+curvature, 100, con, 10, cro, 10, 0.00735821205096
+curvature, 100, cro, 10, cro,  5, 0.0374586054519
+bun_zipper, 100, con,  5, cro,  5, 0.025761664566
+bun_zipper, 100, con,  10, cro,  10, 0.00814327301685
+papain, 100, con,  10, cro,  10, 0.0094025386801
+
+* Gráficos.
+
+** Histograma.
+
+* Conclusiones.

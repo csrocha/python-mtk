@@ -1,0 +1,48 @@
+#!/usr/bin/python
+# vim:expandtab:smartindent:tabstop=4:softtabstop=4:shiftwidth=4:
+
+import sys, os
+from mtk.log import log
+from numpy import zeros
+
+_usage_ = """
+Generate the polygon body from a triangule structure and the related volume information.
+
+vti2vtp [vti input filename] [vtp input filename] [vtp output filename]
+
+The output file is the coordinates and faces from the input vtp file with values from the vti input file.
+"""
+
+from mtk.io.vtk_ff import read_vol, write_pol, read_pol
+
+def interpolate(vti_in_fn, vtp_in_fn, vtp_out_fn):
+    V = read_vol(vti_in_fn)
+    P,s = read_pol(vtp_in_fn)
+
+    s = [ V.get_value(v) for v in P.v ]
+
+    write_pol(P, vtp_out_fn, scalars=s)
+
+if __name__ == "__main__":
+    if len(sys.argv) != 4:
+        print _usage_
+        exit(-1)
+    try:
+        vti_in_filename = sys.argv[1]
+        vtp_in_filename = sys.argv[2]
+        vtp_out_filename = sys.argv[3]
+    except:
+        print "ERROR: Invalid parameters"
+        print _usage_
+        log.error("Shell command '%s'" % ' '.join(sys.argv))
+        exit(-1)
+
+    log.info("Starting interpolating volume")
+    log.info("Shell command '%s'" % ' '.join(sys.argv))
+    log.info("Work path '%s'" % os.getcwd())
+
+    interpolate(vti_in_filename, vtp_in_filename, vtp_out_filename)
+
+    log.info("Stop interpolating volume")
+
+

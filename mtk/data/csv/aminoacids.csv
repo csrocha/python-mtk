@@ -1,0 +1,51 @@
+longname,triname,letter
+"Alanine",ALA,A
+"C-Terminal ALA",ALA,A
+"Arginine",ARG,R
+"C-Terminal ARG",ALA,A
+"Asparagine",ASN,N
+"C-Terminal ASN",ASN,N
+"Aspartic Acid",ASP,D
+"C-Terminal ASP",ASP,D
+"Cysteine (-SH)",CYS,C
+"C-Terminal CYS (-SH)",CYS,C
+"Cystine (-SS-)",CYS,C
+"C-Terminal CYS (-SS)",CYS,C
+"Glutamine",GLN,Q
+"C-Terminal GLN",GLN,Q
+"Glutamic Acid",GLU,E
+"C-Terminal GLU",GLU,E
+"Glycine",GLY,G
+"C-Terminal GLY",GLY,G
+"Histidine (+)",HIS,H
+"C-Terminal HIS (+)",HIS,H
+"Histidine (HD)",HIS,H
+"C-Terminal HIS (HD)",HIS,H
+"Histidine (HE)",HIS,H
+"C-Terminal HIS (HE)",HIS,H
+"Isoleucine",ILE,I
+"C-Terminal ILE",ILE,I
+"Leucine",LEU,L
+"C-Terminal LEU",LEU,L
+"Lysine",LYS,K
+"C-Terminal LYS",LYS,K
+"Methionine",MET,M
+"C-Terminal MET",MET,M
+"N-Terminal MET",MET,E
+"Phenylalanine",PHE,F
+"C-Terminal PHE",PHE,F
+"Proline",PRO,P
+"C-Terminal PRO",PRO,P
+"Serine",SER,S
+"C-Terminal SER",SER,S
+"Threonine",THR,T
+"C-Terminal THR",THR,T
+"Tryptophan",TRP,W
+"C-Terminal TRP",TRP,W
+"Tyrosine",TYR,Y
+"C-Terminal TYR",TYR,Y
+"Valine",VAL,V
+"C-Terminal VAL",VAL,V
+"GTP",GTP,
+"GSP",GSP,
+"GDP",GDP,

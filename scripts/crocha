@@ -1,0 +1,45 @@
+#!/usr/bin/python
+
+from mtk.geometry.vol import load as load_vol
+from mtk.geometry.vol import BasicVolume
+from mtk.geometry.iter import line
+from mtk.geometry.filtre import CrochaFiltre
+from numpy import ndenumerate, zeros
+from numpy.fft import fftshift, ifftn, fftn
+
+def croching(A, radius, value=1):
+    radius = radius * max(A.delta)
+    nmin = A.min - radius*2
+    ndelta = A.delta
+    nshape = A.shape + radius*4 / A.delta
+    NA = BasicVolume(nmin, ndelta, zeros(nshape))
+
+    print "Copiando"
+    _min = NA.t(A.min)
+    _max = NA.t(A.max) + 1
+    NA._data[_min[0]:_max[0], _min[1]:_max[1], _min[2]:_max[2]] = A._data
+
+    B = BasicVolume(nmin, ndelta, zeros(nshape))
+    B = CrochaFiltre(B, radius, value=1)
+    # nnodes es la cota maxima de valores que se pueden obtener a partir de
+    # este filtro.
+    nnodes = sum(B._data.flat)
+
+    print "Computando"
+    Ad = NA._data
+    Bd = B._data.conjugate()
+    Rd = fftshift(ifftn(fftn(Ad) * fftn(Bd).conjugate()))/nnodes
+
+    R = BasicVolume(nmin, ndelta, Rd)
+
+    return R
+
+if __name__ == "__main__":
+    import sys
+    print "Loading"
+    vol, md = load_vol(sys.argv[1])
+    print "Croching"
+    vol = croching(vol, float(sys.argv[3]))
+    print "Storing"
+    vol.dump(sys.argv[2])
+
